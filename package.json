@@ -1,0 +1,30 @@
+{
+  "name": "english-learning-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "db:init": "tsx src/cli.ts db:init",
+    "history": "tsx src/cli.ts history",
+    "ai:check": "tsx src/cli.ts ai:check",
+    "book:check": "tsx src/cli.ts book:check",
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "start:dist": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.21.0",
+    "openai": "^7.55.0",
+    "undici": "^6.29.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
