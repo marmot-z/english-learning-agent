@@ -11,10 +11,14 @@ const selection = {
 };
 
 export async function selectWords(
-  run: RunSelection, kind: keyof typeof selection, candidates: { id: number; word: string }[],
-  quota: number, context: object, signal?: AbortSignal,
+  run: RunSelection,
+  kind: keyof typeof selection,
+  candidates: { id: number; word: string }[],
+  quota: number, context: object,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   signal?.throwIfAborted();
+
   const targetCount = Math.min(quota, candidates.length);
 
   if (!targetCount) {
@@ -29,6 +33,7 @@ export async function selectWords(
     maxTokens: 64 + targetCount * 8,
     signal,
   });
+
   signal?.throwIfAborted();
 
   try {

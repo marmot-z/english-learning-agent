@@ -28,6 +28,7 @@ function parseWordCounts(input: string): DailyWordCounts | null {
 
   const dailyNewWordCount = Number(match[1]);
   const dailyReviewWordCount = Number(match[2]);
+
   return Number.isSafeInteger(dailyNewWordCount) && Number.isSafeInteger(dailyReviewWordCount) ?
     { dailyNewWordCount, dailyReviewWordCount } :
     null;
@@ -52,6 +53,7 @@ async function readOnboardingInput(ask: Ask, book: Book) {
     if (counts) {
       const preferencePrompt = '你已经学过哪些内容？还有什么想重点练习的？直接回车使用默认路线。';
       const preferences = await ask(`${bookOverview(book)}\n\n${preferencePrompt}`);
+
       return preferences === null ? null : { displayName, ...counts, preferences };
     }
 
@@ -85,9 +87,11 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
   const words = await readBookWords(config.bookPath);
   initializeDatabase(config.databasePath, defaultBookMetadata(words.length));
   const service = createLearningService({ historyRepository: createHistoryRepository(config.databasePath) });
+
   const interactive = isInteractiveTerminal();
   const terminal = createInterface({ input: stdin, output: stdout, terminal: interactive, crlfDelay: Infinity });
   const lines = terminal[Symbol.asyncIterator]();
+
   const controller = new AbortController();
   const { signal } = controller;
 
@@ -138,10 +142,16 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
         writeSystem('正在生成学习路线…');
       }
 
-      const details = await service.onboardDefaultUser(book, input, async (book, counts, preferences, signal) => {
-        const { generateBookIntroduction } = await import('../ai/onboarding.js');
-        return generateBookIntroduction(config.ai, book, counts, preferences, signal);
-      }, signal);
+      const details = await service.onboardDefaultUser(
+        book,
+        input,
+        async (book, counts, preferences, signal) => {
+          const { generateBookIntroduction } = await import('../ai/onboarding.js');
+
+          return generateBookIntroduction(config.ai, book, counts, preferences, signal);
+        },
+        signal,
+      );
 
       if (details) {
         const route = input.preferences ? details.introduction : details.progress.plan.description;
@@ -171,6 +181,7 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
 
         return runner.runText(request);
       }, signal);
+
       const newList = newWords.join('、') || '暂无新词';
       const reviewList = reviewWords.join('、') || '暂无复习词';
       writeAgent(`今日新词（${newWords.length}）\n${newList}\n\n今日复习词（${reviewWords.length}）\n${reviewList}`);

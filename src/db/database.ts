@@ -11,6 +11,7 @@ const schemaObjectSchema = z.object({ type: z.string(), name: z.string(), sql: z
 
 function schemaObjects(db: DatabaseSync) {
   const rows = db.prepare("SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'index') AND sql IS NOT NULL").all();
+
   return z.array(schemaObjectSchema).parse(rows);
 }
 
@@ -24,6 +25,7 @@ function expectedObjects() {
     const previous = schemaObjects(reference);
     reference.exec('DROP TABLE word_record; DROP TABLE learning_record; DROP TABLE user_profile;');
     reference.exec(currentSchemaSql);
+
     return { original, previous, current: schemaObjects(reference) };
   } finally {
     reference.close();
@@ -96,6 +98,7 @@ function inWriteTransaction<T>(databasePath: string, write: (db: DatabaseSync) =
     try {
       const result = write(db);
       db.exec('COMMIT');
+
       return result;
     } catch (error) {
       db.exec('ROLLBACK');
@@ -128,11 +131,13 @@ function migrateProfile(db: DatabaseSync, book: Book, version: ProfileSchemaVers
            display_name, book_introduction, profile_summary, daily_new_word_count, daily_review_word_count
     FROM user_profile
   `).run(progress, book.id);
+
   db.exec('DROP TABLE user_profile; ALTER TABLE user_profile_new RENAME TO user_profile;');
 }
 
 export function initializeDatabase(databasePath: string, book: Book): { databasePath: string; tables: string[] } {
   mkdirSync(dirname(databasePath), { recursive: true });
+
   // 重建父表时暂停该连接的外键检查，提交前验证所有现有引用。
   inWriteTransaction(databasePath, (db) => {
     const { missing, profileVersion } = validateSchema(db, true);
@@ -159,6 +164,7 @@ export function initializeDatabase(databasePath: string, book: Book): { database
       throw new AppError('DB_FOREIGN_KEY_INVALID', '数据库外键校验失败，结构变更已回滚。');
     }
   }, false);
+
   return { databasePath, tables: ['book', 'user_profile', 'learning_record', 'word_record'] };
 }
 
@@ -172,6 +178,7 @@ export function readDatabase<T>(databasePath: string, read: (db: DatabaseSync, p
   try {
     db.exec('PRAGMA busy_timeout = 5000; BEGIN');
     const { profileVersion } = validateSchema(db, false);
+
     return read(db, profileVersion);
   } finally {
     db.close();

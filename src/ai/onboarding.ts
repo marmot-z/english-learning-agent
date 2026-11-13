@@ -15,7 +15,8 @@ const introductionSchema = z.object({
 });
 
 export async function generateBookIntroduction(
-  config: AiConfig, book: Book, counts: DailyWordCounts, preferences: string, signal?: AbortSignal,
+  config: AiConfig, book: Book, counts: DailyWordCounts,
+  preferences: string, signal?: AbortSignal,
 ) {
   const runner = createAiRunner(config);
 
@@ -23,7 +24,12 @@ export async function generateBookIntroduction(
     const output = await runner.runText({
       name: 'OnboardingBookIntroduction',
       instructions: onboardingInstructions,
-      input: JSON.stringify({ bookOverview: bookOverview(book), categories: initialBookProgress().categories, ...counts, preferences }),
+      input: JSON.stringify({
+        bookOverview: bookOverview(book),
+        categories: initialBookProgress().categories,
+        ...counts,
+        preferences,
+      }),
       maxTokens: 768,
       signal,
     });
@@ -35,6 +41,7 @@ export async function generateBookIntroduction(
         current: { categoryId: startCategoryId, summary: '' },
       });
       const introduction = `一、词书介绍\n${bookIntroduction}\n\n二、基础学习路线\n${learningRoute}`;
+
       return { introduction, progress };
     } catch (error) {
       throw new AppError(

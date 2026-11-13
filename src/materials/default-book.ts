@@ -39,6 +39,7 @@ export function defaultBookMetadata(wordCount: number): Book {
 
 export function initialBookProgress(plan = defaultPlan, summary = ''): BookProgress {
   const [categoryId = 'adverbs-and-others'] = plan.categoryIds;
+
   return { categories, plan, current: { categoryId, summary } };
 }
 

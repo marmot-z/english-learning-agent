@@ -61,6 +61,7 @@ export function createAiRunner(config: AiConfig): AiRunner {
     fetch: (url, options) => {
       // Node 原生 fetch 支持 Undici dispatcher，保持原生 Request/Response 类型，避免跨版本强制断言。
       const directOptions = { ...options, dispatcher };
+
       return globalThis.fetch(url, directOptions);
     },
   });

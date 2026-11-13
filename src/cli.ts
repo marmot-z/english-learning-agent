@@ -20,12 +20,17 @@ const help = `英语学习 Agent
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: { user: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } },
+    options: {
+      user: { type: 'string' },
+      json: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+    },
   });
   const [command] = positionals;
 
   if (values.help) {
     console.log(help);
+
     return;
   }
 
@@ -55,15 +60,18 @@ async function main(): Promise<void> {
     const { initializeDatabase } = await import('./db/database.js');
     const { readBookWords } = await import('./materials/book.js');
     const { defaultBookMetadata } = await import('./materials/default-book.js');
+
     const words = await readBookWords(config.bookPath);
     const result = initializeDatabase(config.databasePath, defaultBookMetadata(words.length));
     console.log(`数据库已初始化：${result.databasePath}\n表：${result.tables.join(', ')}\n未插入学习数据。`);
+
     return;
   }
 
   if (command === 'history') {
     const { createHistoryRepository } = await import('./db/history-repository.js');
     const { createLearningService } = await import('./services/learning-service.js');
+
     const service = createLearningService({ historyRepository: createHistoryRepository(config.databasePath) });
     const context = service.loadLearningContext(values.user ?? 'default');
 
@@ -76,6 +84,7 @@ async function main(): Promise<void> {
     }
 
     console.log(JSON.stringify(context, null, 2));
+
     return;
   }
 
@@ -83,6 +92,7 @@ async function main(): Promise<void> {
     const { readBook } = await import('./materials/book.js');
     const { content: _content, ...info } = await readBook(config.bookPath);
     console.log(JSON.stringify(info, null, 2));
+
     return;
   }
 

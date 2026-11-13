@@ -20,6 +20,7 @@ export function isInteractiveTerminal(): boolean {
 function rolePrefix(role: keyof typeof roles, stream: WriteStream): string {
   const { label, padding, color } = roles[role];
   const useColor = isInteractiveTerminal() && stream.isTTY && !('NO_COLOR' in process.env) && process.env.TERM !== 'dumb';
+
   return (useColor ? styleText(color, label, { stream }) : label) + padding;
 }
 

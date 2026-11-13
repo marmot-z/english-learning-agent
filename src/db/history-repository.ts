@@ -15,35 +15,67 @@ export interface HistoryRepository {
   loadPlanContext(userId: string): { profile: UserProfile; book: Book; learnedWords: string[]; reviewCandidates: ReviewCandidate[] };
 }
 
-type NewUserProfile = Pick<UserProfile,
+type NewUserProfile = Pick<
+  UserProfile,
   'userId' | 'displayName' | 'bookId' | 'progress' | 'bookIntroduction' | 'dailyNewWordCount' | 'dailyReviewWordCount'
 >;
 
 const profileFields = z.object({
-  userId: z.string(), displayName: z.string(), currentLevel: z.string(),
-  bookIntroduction: z.string(), profileSummary: z.string(),
-  dailyNewWordCount: z.int().nonnegative(), dailyReviewWordCount: z.int().nonnegative(),
-  learningCount: z.number().int(), lastLearningAt: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),
+  userId: z.string(),
+  displayName: z.string(),
+  currentLevel: z.string(),
+  bookIntroduction: z.string(),
+  profileSummary: z.string(),
+  dailyNewWordCount: z.int().nonnegative(),
+  dailyReviewWordCount: z.int().nonnegative(),
+  learningCount: z.number().int(),
+  lastLearningAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
 });
 const storedProfileSchema = profileFields.extend({ bookId: z.string(), progress: z.string() });
 const legacyProfileSchema = profileFields.extend({ book: z.string(), progress: z.string() });
 const storedBookSchema = z.object({
-  id: z.string(), title: z.string(), introduction: z.string(), defaultPlan: z.string(), wordCount: z.int().positive(),
+  id: z.string(),
+  title: z.string(),
+  introduction: z.string(),
+  defaultPlan: z.string(),
+  wordCount: z.int().positive(),
 });
 
 const sessionSchema = z.object({
-  id: z.number().int(), userId: z.string(), newWords: z.array(z.string()), reviewWords: z.array(z.string()),
-  answers: z.array(z.unknown()), evaluation: z.string(), score: z.number().nullable(), durationSeconds: z.number().int(),
-  status: z.enum(['in_progress', 'completed', 'interrupted']), startedAt: z.string(), completedAt: z.string().nullable(),
+  id: z.number().int(),
+  userId: z.string(),
+  newWords: z.array(z.string()),
+  reviewWords: z.array(z.string()),
+  answers: z.array(z.unknown()),
+  evaluation: z.string(),
+  score: z.number().nullable(),
+  durationSeconds: z.number().int(),
+  status: z.enum(['in_progress', 'completed', 'interrupted']),
+  startedAt: z.string(),
+  completedAt: z.string().nullable(),
 }) satisfies z.ZodType<LearningRecord>;
 
 const wordSchema = z.object({
-  id: z.number().int(), userId: z.string(), book: z.string(), word: z.string(), learningCount: z.number().int(),
-  errorCount: z.number().int(), lastLearningAt: z.string().nullable(), sentences: z.array(z.string()),
-  score: z.number().nullable(), evaluation: z.string(),
+  id: z.number().int(),
+  userId: z.string(),
+  book: z.string(),
+  word: z.string(),
+  learningCount: z.number().int(),
+  errorCount: z.number().int(),
+  lastLearningAt: z.string().nullable(),
+  sentences: z.array(z.string()),
+  score: z.number().nullable(),
+  evaluation: z.string(),
 }) satisfies z.ZodType<WordRecord>;
 const reviewCandidateSchema = wordSchema.pick({
-  id: true, word: true, learningCount: true, errorCount: true, evaluation: true, lastLearningAt: true,
+  id: true,
+  word: true,
+  learningCount: true,
+  errorCount: true,
+  evaluation: true,
+  lastLearningAt: true,
 });
 
 function parseRow<T>(schema: z.ZodType<T>, row: unknown, table: string): T {
@@ -92,6 +124,7 @@ function loadBook(db: DatabaseSync, bookId: string): Book {
   }
 
   const book = parseRow(storedBookSchema, row, 'book');
+
   return { ...book, defaultPlan: readStoredJson(bookPlanSchema, book.defaultPlan, 'book.default_plan') };
 }
 
@@ -114,11 +147,13 @@ function findProfile(db: DatabaseSync, userId: string, version: ProfileSchemaVer
 
   if (version === 'current') {
     const profile = parseRow(storedProfileSchema, row, 'user_profile');
+
     return { ...profile, progress: readStoredJson(bookProgressSchema, profile.progress, 'user_profile.progress') };
   }
 
   const { book, progress, ...profile } = parseRow(legacyProfileSchema, row, 'user_profile');
   assertDefaultBookTitle(book);
+
   return { ...profile, bookId: defaultBookId, progress: initialBookProgress(undefined, progress) };
 }
 
@@ -139,10 +174,16 @@ export function createHistoryRepository(databasePath: string): HistoryRepository
             daily_new_word_count, daily_review_word_count, created_at, updated_at
           ) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(user_id) DO NOTHING
-        `).run(userId, displayName, bookId, JSON.stringify(progress), bookIntroduction, dailyNewWordCount, dailyReviewWordCount, now, now);
+        `).run(
+          userId, displayName, bookId,
+          JSON.stringify(progress), bookIntroduction, dailyNewWordCount,
+          dailyReviewWordCount, now, now,
+        );
+
         return result.changes === 1;
       });
     },
+
     loadPlanContext(userId) {
       return readDatabase(databasePath, (db, version) => {
         const profile = findProfile(db, userId, version);
@@ -154,16 +195,22 @@ export function createHistoryRepository(databasePath: string): HistoryRepository
         const book = loadBook(db, profile.bookId);
         const learnedWords = db.prepare(`
           SELECT word FROM word_record WHERE user_id = ? AND book = ? AND learning_count > 0
-        `).all(userId, book.title).map((row) => parseRow(z.string(), row.word, 'word_record'));
+        `)
+          .all(userId, book.title)
+          .map((row) => parseRow(z.string(), row.word, 'word_record'));
         const reviewCandidates = db.prepare(`
           SELECT id, word, learning_count AS learningCount, error_count AS errorCount,
                  evaluation, last_learning_at AS lastLearningAt
           FROM word_record WHERE user_id = ? AND book = ? AND learning_count > 0
           ORDER BY last_learning_at DESC, id DESC LIMIT 30
-        `).all(userId, book.title).map((row) => parseRow(reviewCandidateSchema, row, 'word_record'));
+        `)
+          .all(userId, book.title)
+          .map((row) => parseRow(reviewCandidateSchema, row, 'word_record'));
+
         return { profile, book, learnedWords, reviewCandidates };
       });
     },
+
     loadContext(userId) {
       return readDatabase(databasePath, (db, legacyProfile) => {
         const profile = findProfile(db, userId, legacyProfile);
@@ -184,16 +231,28 @@ export function createHistoryRepository(databasePath: string): HistoryRepository
 
         return {
           profile,
-          recentSessions: records.map(({ new_words_json, review_words_json, answers_json, ...record }) => parseRow(sessionSchema, {
-            ...record,
-            newWords: arrayFromJson(new_words_json, 'learning_record.new_words_json'),
-            reviewWords: arrayFromJson(review_words_json, 'learning_record.review_words_json'),
-            answers: arrayFromJson(answers_json, 'learning_record.answers_json'),
-          }, 'learning_record')),
-          learnedWords: words.map(({ sentences_json, ...word }) => parseRow(wordSchema, {
-            ...word,
-            sentences: arrayFromJson(sentences_json, 'word_record.sentences_json'),
-          }, 'word_record')),
+          recentSessions: records.map(({ new_words_json, review_words_json, answers_json, ...record }) =>
+            parseRow(
+              sessionSchema,
+              {
+                ...record,
+                newWords: arrayFromJson(new_words_json, 'learning_record.new_words_json'),
+                reviewWords: arrayFromJson(review_words_json, 'learning_record.review_words_json'),
+                answers: arrayFromJson(answers_json, 'learning_record.answers_json'),
+              },
+              'learning_record',
+            ),
+          ),
+          learnedWords: words.map(({ sentences_json, ...word }) =>
+            parseRow(
+              wordSchema,
+              {
+                ...word,
+                sentences: arrayFromJson(sentences_json, 'word_record.sentences_json'),
+              },
+              'word_record',
+            ),
+          ),
         };
       });
     },

@@ -7,6 +7,7 @@ export const aiConfigSchema = z.object({
     }
 
     const url = new URL(value);
+
     return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
   }),
   apiKey: z.string().trim().min(1),

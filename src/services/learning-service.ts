@@ -17,7 +17,8 @@ interface OnboardingInput extends DailyWordCounts {
 }
 
 type GenerateBookIntroduction = (
-  book: Book, counts: DailyWordCounts, preferences: string, signal?: AbortSignal,
+  book: Book, counts: DailyWordCounts, preferences: string,
+  signal?: AbortSignal,
 ) => Promise<{ introduction: string; progress: BookProgress }>;
 
 function notImplemented(stage: string): never {
@@ -32,17 +33,30 @@ export function createLearningService({ historyRepository }: { historyRepository
     findDefaultProfile() {
       return historyRepository.findProfile(defaultUserId);
     },
-    async onboardDefaultUser(book: Book, input: OnboardingInput, generateBookIntroduction: GenerateBookIntroduction, signal?: AbortSignal) {
+    async onboardDefaultUser(
+      book: Book,
+      input: OnboardingInput,
+      generateBookIntroduction: GenerateBookIntroduction,
+      signal?: AbortSignal,
+    ) {
       const { displayName, preferences, ...counts } = input;
       signal?.throwIfAborted();
+
       const details = preferences ?
         await generateBookIntroduction(book, counts, preferences, signal) :
         { introduction: book.introduction, progress: initialBookProgress(book.defaultPlan) };
       signal?.throwIfAborted();
+
       const progress = bookProgressSchema.parse(details.progress);
       const created = historyRepository.insertProfile({
-        userId: defaultUserId, displayName, bookId: book.id, progress, bookIntroduction: details.introduction, ...counts,
+        userId: defaultUserId,
+        displayName,
+        bookId: book.id,
+        progress,
+        bookIntroduction: details.introduction,
+        ...counts,
       });
+
       return created ? details : null;
     },
     loadLearningContext(userId: string = defaultUserId): LearningContext {
@@ -61,6 +75,7 @@ export function createLearningService({ historyRepository }: { historyRepository
 
       const learned = new Set(learnedWords.map(wordKey));
       const newCandidates = words.filter(({ word }) => !learned.has(wordKey(word)));
+
       const categoryIdsByWord = new Map(words.map(({ word, categoryIds }) => [wordKey(word), categoryIds]));
       const reviewByWord = new Map<string, (typeof reviewCandidates)[number] & { categoryIds: string[] }>();
 
@@ -75,8 +90,12 @@ export function createLearningService({ historyRepository }: { historyRepository
       const review = [...reviewByWord.values()];
       const newWords = await selectWords(run, 'new', newCandidates, profile.dailyNewWordCount, { progress: profile.progress }, signal);
       const reviewWords = await selectWords(
-        run, 'review', review, profile.dailyReviewWordCount, { categories: profile.progress.categories }, signal,
+        run, 'review', review,
+        profile.dailyReviewWordCount,
+        { categories: profile.progress.categories },
+        signal,
       );
+
       return { newWords, reviewWords };
     },
     async generateWordLesson(_input: unknown): Promise<never> {
