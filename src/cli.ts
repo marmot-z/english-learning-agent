@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 import { loadLocalEnvironment, readConfig } from './config.js';
 import { AppError, errorCode } from './errors.js';
 import { writeSystemError } from './cli/conversation.js';
+import { withProgress } from './cli/progress.js';
 
 const help = `英语学习 Agent
 
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
     const { readBookWords } = await import('./materials/book.js');
     const { defaultBookMetadata } = await import('./materials/default-book.js');
 
-    const words = await readBookWords(config.bookPath);
+    const words = await withProgress('读取词书', () => readBookWords(config.bookPath));
     const result = initializeDatabase(config.databasePath, defaultBookMetadata(words.length));
     console.log(`数据库已初始化：${result.databasePath}\n表：${result.tables.join(', ')}\n未插入学习数据。`);
 
@@ -90,14 +91,15 @@ async function main(): Promise<void> {
 
   if (command === 'book:check') {
     const { readBook } = await import('./materials/book.js');
-    const { content: _content, ...info } = await readBook(config.bookPath);
+    const { content: _content, ...info } = await withProgress('读取词书', () => readBook(config.bookPath));
     console.log(JSON.stringify(info, null, 2));
 
     return;
   }
 
   const { checkAiConnection } = await import('./ai/check.js');
-  console.log(JSON.stringify(await checkAiConnection(config.ai), null, 2));
+  const result = await withProgress('检查 AI 连通性', () => checkAiConnection(config.ai));
+  console.log(JSON.stringify(result, null, 2));
 }
 
 function reportError(error: unknown, conversation = false): void {

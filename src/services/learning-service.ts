@@ -7,7 +7,7 @@ import { defaultBookId, initialBookProgress } from '../materials/default-book.js
 import { wordKey } from '../materials/book.js';
 import type { BookWord } from '../materials/book.js';
 import { selectWords } from '../ai/word-selection.js';
-import type { RunSelection } from '../ai/word-selection.js';
+import type { RunSelection, TrackSelection } from '../ai/word-selection.js';
 
 export const defaultUserId = 'default';
 
@@ -66,7 +66,9 @@ export function createLearningService({ historyRepository }: { historyRepository
 
       return historyRepository.loadContext(userId.trim());
     },
-    async prepareLearningPlan(words: BookWord[], run: RunSelection, signal?: AbortSignal): Promise<LearningPlan> {
+    async prepareLearningPlan(
+      words: BookWord[], run: RunSelection, signal?: AbortSignal, trackSelection?: TrackSelection,
+    ): Promise<LearningPlan> {
       const { profile, book, learnedWords, reviewCandidates } = historyRepository.loadPlanContext(defaultUserId);
 
       if (book.id !== defaultBookId) {
@@ -88,12 +90,16 @@ export function createLearningService({ historyRepository }: { historyRepository
       }
 
       const review = [...reviewByWord.values()];
-      const newWords = await selectWords(run, 'new', newCandidates, profile.dailyNewWordCount, { progress: profile.progress }, signal);
+      const newWords = await selectWords(
+        run, 'new', newCandidates,
+        profile.dailyNewWordCount, { progress: profile.progress },
+        signal, trackSelection,
+      );
       const reviewWords = await selectWords(
         run, 'review', review,
         profile.dailyReviewWordCount,
         { categories: profile.progress.categories },
-        signal,
+        signal, trackSelection,
       );
 
       return { newWords, reviewWords };

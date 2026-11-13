@@ -13,6 +13,27 @@ const graphemes = new Intl.Segmenter();
 const wideCharacter = /^(?:[\u1100-\u115f\u2329-\u232a\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe6f\uff01-\uff60\uffe0-\uffe6]|\p{Script=Han}|\p{Emoji_Presentation})|\u20e3/u;
 const closingPunctuation = /^[、，。！？：；）》】」』”’]/u;
 
+export function fitTerminalLine(text: string, columns: number): string {
+  if (columns <= 0) {
+    return '';
+  }
+
+  let width = 0;
+  let result = '';
+
+  for (const { segment } of graphemes.segment(text)) {
+    width += wideCharacter.test(segment) ? 2 : 1;
+
+    if (width > columns) {
+      return result.trimEnd();
+    }
+
+    result += segment;
+  }
+
+  return result;
+}
+
 export function isInteractiveTerminal(): boolean {
   return Boolean(stdin.isTTY && stdout.isTTY);
 }

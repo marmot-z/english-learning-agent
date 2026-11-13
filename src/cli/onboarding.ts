@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
 import { stdin, stdout } from 'node:process';
+import { Writable } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
 import type { AppConfig } from '../config.js';
 import type { DailyWordCounts } from '../domain/types.js';
@@ -10,8 +11,10 @@ import { readBookWords } from '../materials/book.js';
 import { bookOverview, defaultBookMetadata } from '../materials/default-book.js';
 import type { Book } from '../domain/types.js';
 import type { AiRunner } from '../ai/client.js';
+import type { TrackSelection } from '../ai/word-selection.js';
 import { createLearningService } from '../services/learning-service.js';
-import { isInteractiveTerminal, userPrompt, writeAgent, writeSystem } from './conversation.js';
+import { isInteractiveTerminal, userPrompt, writeAgent } from './conversation.js';
+import { withProgress } from './progress.js';
 
 type Ask = (prompt: string) => Promise<string | null>;
 
@@ -84,12 +87,27 @@ async function confirmStart(ask: Ask, displayName: string): Promise<boolean> {
 }
 
 export async function runOnboarding(config: AppConfig): Promise<void> {
-  const words = await readBookWords(config.bookPath);
-  initializeDatabase(config.databasePath, defaultBookMetadata(words.length));
-  const service = createLearningService({ historyRepository: createHistoryRepository(config.databasePath) });
-
   const interactive = isInteractiveTerminal();
-  const terminal = createInterface({ input: stdin, output: stdout, terminal: interactive, crlfDelay: Infinity });
+  let isShowingProgress = false;
+  // 保留 readline 输入和 Ctrl+C 处理，只在进度期间关闭回显。
+  const output = Object.assign(new Writable({
+    write(chunk, encoding, callback) {
+      if (isShowingProgress) {
+        callback();
+
+        return;
+      }
+
+      stdout.write(chunk, encoding, callback);
+    },
+  }), { columns: stdout.columns });
+
+  function resize() {
+    output.columns = stdout.columns;
+    output.emit('resize');
+  }
+
+  const terminal = createInterface({ input: stdin, output, terminal: interactive, crlfDelay: Infinity });
   const lines = terminal[Symbol.asyncIterator]();
 
   const controller = new AbortController();
@@ -103,6 +121,22 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
 
   terminal.on('SIGINT', interrupt);
   process.on('SIGINT', interrupt);
+  stdout.on('resize', resize);
+
+  async function track<T>(label: string, operation: () => Promise<T>): Promise<T> {
+    isShowingProgress = true;
+
+    try {
+      return await withProgress(label, operation, signal);
+    } finally {
+      isShowingProgress = false;
+    }
+  }
+
+  const trackSelection: TrackSelection = (kind, operation) => track(
+    kind === 'new' ? '挑选今日新词' : '挑选今日复习词',
+    operation,
+  );
 
   const ask: Ask = async (prompt) => {
     if (signal.aborted) {
@@ -128,6 +162,9 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
   try {
     // 等待 Node 输出启动警告后再显示第一条对话。
     await setImmediate();
+    const words = await track('读取词书', () => readBookWords(config.bookPath));
+    initializeDatabase(config.databasePath, defaultBookMetadata(words.length));
+    const service = createLearningService({ historyRepository: createHistoryRepository(config.databasePath) });
     let profile = service.findDefaultProfile();
 
     if (!profile) {
@@ -138,18 +175,14 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
         return;
       }
 
-      if (input.preferences) {
-        writeSystem('正在生成学习路线…');
-      }
-
       const details = await service.onboardDefaultUser(
         book,
         input,
-        async (book, counts, preferences, signal) => {
+        (book, counts, preferences, signal) => track('生成个性化学习路线', async () => {
           const { generateBookIntroduction } = await import('../ai/onboarding.js');
 
           return generateBookIntroduction(config.ai, book, counts, preferences, signal);
-        },
+        }),
         signal,
       );
 
@@ -169,7 +202,6 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
       return;
     }
 
-    writeSystem('正在准备今日词单…');
     let runner: AiRunner | undefined;
 
     try {
@@ -180,7 +212,7 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
         }
 
         return runner.runText(request);
-      }, signal);
+      }, signal, trackSelection);
 
       const newList = newWords.join('、') || '暂无新词';
       const reviewList = reviewWords.join('、') || '暂无复习词';
@@ -194,6 +226,7 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
     }
   } finally {
     process.off('SIGINT', interrupt);
+    stdout.off('resize', resize);
     terminal.close();
   }
 }
