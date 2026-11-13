@@ -24,7 +24,7 @@ AI 给出逐词评价和整体评价
 
 上图是目标流程，不是当前实现状态。AI 决定教学内容、选词和评价；程序决定执行顺序、用户隔离、循环、参数校验及写入。AI 不直接执行数据库写操作。暂缓某个新词不等于已掌握；未来规划阶段需要返回暂缓理由，不能把它写成已学习。
 
-词书末尾有独立的分类词表，后续选词以其为来源。首次建档向 AI 提供固定词书介绍、参考路线、每日配额和用户自述。词书材料和用户自述作为参考数据。
+选词以词书末尾的分类词表为来源。当前附录包含 9 个大类和 1,099 个去重词条。首次建档使用默认学习路线，用户填写个性化要求时，向 AI 提供词书介绍、参考路线、分类、每日配额和用户自述。
 
 ## 模块与接口
 
@@ -41,9 +41,10 @@ AI 给出逐词评价和整体评价
 
 `createLearningService({ historyRepository })` 返回以下接口：
 
-- `findDefaultProfile()` 只查询本地用户 `default` 的档案。`onboardDefaultUser(input, generateBookIntroduction, signal)` 在词书介绍和学习路线生成成功后保存档案。
+- `findDefaultProfile()` 只查询本地用户 `default` 的档案。`onboardDefaultUser(book, input, generateBookIntroduction, signal)` 保存选定词书和默认或个性化进度。
 - `loadLearningContext(userId = 'default')`：返回 `{ profile, recentSessions, learnedWords }`，查询是同步的、只读的。
-- `prepareLearningPlan(input)`、`generateWordLesson(input)`、`correctAnswer(input)`、`evaluateSession(input)`：输入暂为 `unknown`，返回 `Promise<never>`，目前抛出 `NOT_IMPLEMENTED`。输入输出的业务结构在对应阶段确定，不提前伪造契约。
+- `prepareLearningPlan(words, run, signal)` 返回 `{ newWords, reviewWords }`。在一次只读事务中读取规划上下文，排除已学词，并将最近 30 条同用户同词书的已学记录用作复习候选。新词与复习词分别调用 AI，程序验证结果数量、归属和唯一性。
+- `generateWordLesson(input)`、`correctAnswer(input)`、`evaluateSession(input)` 仍为后续阶段接口。
 
 `createAiRunner(config)` 提供 `runText({ name, instructions, input, maxTokens })` 和 `close()`；调用者必须关闭连接资源。本阶段一次运行最多一轮，无工具、无 handoff、无结构化输出。采用独立模型对象避免隐式选用 Responses API。
 
@@ -55,11 +56,12 @@ AI 给出逐词评价和整体评价
 
 | 表 | 核心字段与约束 |
 | --- | --- |
-| user_profile | user_id 主键、display_name、book、book_introduction、current_level、progress、profile_summary、daily_new_word_count、daily_review_word_count、learning_count、last_learning_at |
+| book | id 主键、title、introduction、default_plan、word_count |
+| user_profile | user_id 主键、display_name、book_id、book_introduction、current_level、progress、profile_summary、daily_new_word_count、daily_review_word_count、learning_count、last_learning_at |
 | learning_record | id 主键；user_id；new_words_json、review_words_json、answers_json；evaluation、score、duration_seconds；status、started_at、completed_at |
 | word_record | id 主键；user_id、book、word 联合唯一；learning_count、error_count、last_learning_at、sentences_json、score、evaluation |
 
-三张表均有 created_at、updated_at。时间统一约定为 UTC ISO 8601（写入时使用 `toISOString()`），展示层再转换本地时间。评分预留 0–100，未评分为 null；学习次数、错误次数和耗时为非负值。具体评分规则尚未实现。
+档案和学习记录表均有 created_at、updated_at。时间统一使用 UTC ISO 8601，展示层再转换本地时间。评分预留 0–100，未评分为 null。
 
 学习状态为 `in_progress`、`completed`、`interrupted`；completed 必须有 completed_at。前三次仅取 completed，按 completed_at 倒序，同时间按 id 倒序。已学词仅取 learning_count > 0，保留词书标识以供后续规划区分。列表字段在数据库校验 JSON 有效性，repository 进一步要求为数组；坏数据明确报错，不静默替换为空。
 
@@ -67,9 +69,9 @@ repository 使用 Zod 校验数据库结果后返回领域类型。新词、复�
 
 历史读取在一个只读事务中完成，避免三个查询读到不同版本。查询按 user_id 参数化过滤。历史读取不会初始化画像、增加学习次数、刷新最近学习时间或调用 AI。
 
-`npm start` 和 `db:init` 在事务中创建缺少的表与索引，为已知旧版 `user_profile` 追加建档字段。兼容检查基于 DDL 比较，遇到未知结构时回滚。读取旧画像时以用户 ID 作为称呼，配额默认为 `10,5`。
+`npm start` 和 `db:init` 在事务中创建表与索引、初始化默认词书，并将已知旧版档案按书名迁移到 `book_id`。旧进度文本保存在 `progress.current.summary`，未知结构或无法映射的词书会使迁移回滚。
 
-首次建档把生成的词书介绍和基础学习路线一并写入 `book_introduction`。当前水平、学习进度和画像摘要留空。开启会话、学习计次和结束后更新画像由后续阶段实现。
+首次建档把全书分类、路线和起始分类写入 `progress`，个性化词书介绍仍保存在 `book_introduction`。每日词单生成后不推进当前分类，也不更新学习统计。
 
 ## 错误与配置
 

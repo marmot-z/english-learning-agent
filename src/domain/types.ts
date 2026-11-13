@@ -1,3 +1,5 @@
+import type { BookPlan, BookProgress } from './progress.js';
+
 export interface DailyWordCounts {
   dailyNewWordCount: number;
   dailyReviewWordCount: number;
@@ -7,14 +9,29 @@ export interface UserProfile extends DailyWordCounts {
   userId: string;
   displayName: string;
   currentLevel: string;
-  progress: string;
-  book: string;
+  progress: BookProgress;
+  bookId: string;
   bookIntroduction: string;
   profileSummary: string;
   learningCount: number;
   lastLearningAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Book {
+  id: string;
+  title: string;
+  introduction: string;
+  defaultPlan: BookPlan;
+  wordCount: number;
+}
+
+export type ReviewCandidate = Pick<WordRecord, 'id' | 'word' | 'learningCount' | 'errorCount' | 'evaluation' | 'lastLearningAt'>;
+
+export interface LearningPlan {
+  newWords: string[];
+  reviewWords: string[];
 }
 
 export type LearningStatus = 'in_progress' | 'completed' | 'interrupted';

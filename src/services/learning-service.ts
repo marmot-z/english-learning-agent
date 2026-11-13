@@ -1,7 +1,13 @@
 import { AppError } from '../errors.js';
 import type { HistoryRepository } from '../db/history-repository.js';
-import type { DailyWordCounts, LearningContext } from '../domain/types.js';
-import { defaultBookTitle } from '../materials/default-book.js';
+import type { Book, DailyWordCounts, LearningContext, LearningPlan } from '../domain/types.js';
+import type { BookProgress } from '../domain/progress.js';
+import { bookProgressSchema } from '../domain/progress.js';
+import { defaultBookId, initialBookProgress } from '../materials/default-book.js';
+import { wordKey } from '../materials/book.js';
+import type { BookWord } from '../materials/book.js';
+import { selectWords } from '../ai/word-selection.js';
+import type { RunSelection } from '../ai/word-selection.js';
 
 export const defaultUserId = 'default';
 
@@ -10,7 +16,9 @@ interface OnboardingInput extends DailyWordCounts {
   preferences: string;
 }
 
-type GenerateBookIntroduction = (counts: DailyWordCounts, preferences: string, signal?: AbortSignal) => Promise<string>;
+type GenerateBookIntroduction = (
+  book: Book, counts: DailyWordCounts, preferences: string, signal?: AbortSignal,
+) => Promise<{ introduction: string; progress: BookProgress }>;
 
 function notImplemented(stage: string): never {
   throw new AppError('NOT_IMPLEMENTED', `${stage}尚未实现。`);
@@ -18,18 +26,24 @@ function notImplemented(stage: string): never {
 
 export function createLearningService({ historyRepository }: { historyRepository: HistoryRepository }) {
   return {
+    loadDefaultBook() {
+      return historyRepository.loadDefaultBook();
+    },
     findDefaultProfile() {
       return historyRepository.findProfile(defaultUserId);
     },
-    async onboardDefaultUser(input: OnboardingInput, generateBookIntroduction: GenerateBookIntroduction, signal?: AbortSignal) {
+    async onboardDefaultUser(book: Book, input: OnboardingInput, generateBookIntroduction: GenerateBookIntroduction, signal?: AbortSignal) {
       const { displayName, preferences, ...counts } = input;
       signal?.throwIfAborted();
-      const bookIntroduction = await generateBookIntroduction(counts, preferences, signal);
+      const details = preferences ?
+        await generateBookIntroduction(book, counts, preferences, signal) :
+        { introduction: book.introduction, progress: initialBookProgress(book.defaultPlan) };
       signal?.throwIfAborted();
+      const progress = bookProgressSchema.parse(details.progress);
       const created = historyRepository.insertProfile({
-        userId: defaultUserId, displayName, book: defaultBookTitle, bookIntroduction, ...counts,
+        userId: defaultUserId, displayName, bookId: book.id, progress, bookIntroduction: details.introduction, ...counts,
       });
-      return created ? bookIntroduction : null;
+      return created ? details : null;
     },
     loadLearningContext(userId: string = defaultUserId): LearningContext {
       if (typeof userId !== 'string' || !userId.trim()) {
@@ -38,8 +52,32 @@ export function createLearningService({ historyRepository }: { historyRepository
 
       return historyRepository.loadContext(userId.trim());
     },
-    async prepareLearningPlan(_input: unknown): Promise<never> {
-      return notImplemented('学习规划');
+    async prepareLearningPlan(words: BookWord[], run: RunSelection, signal?: AbortSignal): Promise<LearningPlan> {
+      const { profile, book, learnedWords, reviewCandidates } = historyRepository.loadPlanContext(defaultUserId);
+
+      if (book.id !== defaultBookId) {
+        throw new AppError('BOOK_WORD_LIST_UNSUPPORTED', '当前词书没有可用的分类词表。');
+      }
+
+      const learned = new Set(learnedWords.map(wordKey));
+      const newCandidates = words.filter(({ word }) => !learned.has(wordKey(word)));
+      const categoryIdsByWord = new Map(words.map(({ word, categoryIds }) => [wordKey(word), categoryIds]));
+      const reviewByWord = new Map<string, (typeof reviewCandidates)[number] & { categoryIds: string[] }>();
+
+      for (const candidate of reviewCandidates) {
+        const key = wordKey(candidate.word);
+
+        if (!reviewByWord.has(key)) {
+          reviewByWord.set(key, { ...candidate, categoryIds: categoryIdsByWord.get(key) ?? [] });
+        }
+      }
+
+      const review = [...reviewByWord.values()];
+      const newWords = await selectWords(run, 'new', newCandidates, profile.dailyNewWordCount, { progress: profile.progress }, signal);
+      const reviewWords = await selectWords(
+        run, 'review', review, profile.dailyReviewWordCount, { categories: profile.progress.categories }, signal,
+      );
+      return { newWords, reviewWords };
     },
     async generateWordLesson(_input: unknown): Promise<never> {
       return notImplemented('单词教学');

@@ -1,37 +1,52 @@
 -- 英语学习 Agent 的 SQLite 建表脚本，适用于空数据库。
--- user_profile 的部分标点位置与 SQLite 追加字段后的定义一致，供应用校验。
+-- 默认词书由应用初始化时从 BOOK_PATH 对应词表统计并写入。
 
 PRAGMA foreign_keys = ON;
 BEGIN;
 
+-- book 词书
+-- id           词书唯一标识，默认词书为 1368。
+-- title        唯一书名，也用于关联历史单词记录。
+-- introduction 词书简介。
+-- default_plan 默认学习路线，JSON 对象包含有序分类 ID 和路线说明。
+-- word_count   分类词表实际去重后的词条数。
+CREATE TABLE book (
+  id TEXT PRIMARY KEY NOT NULL,
+  title TEXT NOT NULL UNIQUE,
+  introduction TEXT NOT NULL,
+  default_plan TEXT NOT NULL CHECK (json_valid(default_plan)),
+  word_count INTEGER NOT NULL CHECK (word_count > 0)
+);
+
 -- user_profile 用户学习档案
 -- user_id                 用户唯一标识，当前 CLI 使用 default。
 -- current_level           用户当前英语水平，首次建档留空。
--- progress                已学习内容的概要，首次建档留空。
--- book                    当前学习词书的名称。
+-- progress                JSON 对象，记录全书分类、用户学习路线、当前分类和已学习内容概要。
+-- book_id                 当前学习词书的标识，关联 book.id。
 -- learning_count          用户累计学习次数，初始为 0。
 -- last_learning_at        用户最近一次学习时间，尚未学习时为 NULL。
 -- created_at              档案创建时间。
 -- updated_at              档案最近更新时间。
 -- display_name            CLI 问候使用的称呼，旧档案为 NULL 时使用 user_id。
--- book_introduction       AI 生成的词书简介和个性化基础学习路线。
+-- book_introduction       建档时的词书简介及个性化路线（如有），保留旧档案内容。
 -- profile_summary         用户画像摘要，可记录大致水平和其他辅助信息，首次建档留空。
 -- daily_new_word_count    每日计划学习的新词数，默认 10。
 -- daily_review_word_count 每日计划复习的旧词数，默认 5。
 CREATE TABLE user_profile (
   user_id TEXT PRIMARY KEY NOT NULL,
   current_level TEXT NOT NULL,
-  progress TEXT NOT NULL DEFAULT '',
-  book TEXT NOT NULL,
+  progress TEXT NOT NULL CHECK (json_valid(progress)),
+  book_id TEXT NOT NULL REFERENCES book(id),
   learning_count INTEGER NOT NULL DEFAULT 0 CHECK (learning_count >= 0),
   last_learning_at TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-  , display_name TEXT,
+  updated_at TEXT NOT NULL,
+  display_name TEXT,
   book_introduction TEXT NOT NULL DEFAULT '',
   profile_summary TEXT NOT NULL DEFAULT '',
   daily_new_word_count INTEGER NOT NULL DEFAULT 10 CHECK (daily_new_word_count >= 0),
-  daily_review_word_count INTEGER NOT NULL DEFAULT 5 CHECK (daily_review_word_count >= 0));
+  daily_review_word_count INTEGER NOT NULL DEFAULT 5 CHECK (daily_review_word_count >= 0)
+);
 
 -- learning_record 学习会话记录
 -- id                学习会话主键。

@@ -5,8 +5,8 @@ import { writeSystemError } from './cli/conversation.js';
 
 const help = `英语学习 Agent
 
-已实现：首次建档、老用户回访、历史读取、AI 代理检查、词书读取。
-待实现：每日选词、逐词教学纠正、评估入库。
+已实现：首次建档、老用户回访、每日选词、历史读取、AI 代理检查、词书读取。
+待实现：逐词教学纠正、评估入库。
 
 命令：
   npm start
@@ -53,7 +53,10 @@ async function main(): Promise<void> {
 
   if (command === 'db:init') {
     const { initializeDatabase } = await import('./db/database.js');
-    const result = initializeDatabase(config.databasePath);
+    const { readBookWords } = await import('./materials/book.js');
+    const { defaultBookMetadata } = await import('./materials/default-book.js');
+    const words = await readBookWords(config.bookPath);
+    const result = initializeDatabase(config.databasePath, defaultBookMetadata(words.length));
     console.log(`数据库已初始化：${result.databasePath}\n表：${result.tables.join(', ')}\n未插入学习数据。`);
     return;
   }

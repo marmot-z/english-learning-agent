@@ -1,25 +1,35 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { readDatabase, writeDatabase } from './database.js';
+import { assertDefaultBookTitle, readDatabase, writeDatabase } from './database.js';
+import type { ProfileSchemaVersion } from './database.js';
 import { AppError } from '../errors.js';
 import { z } from 'zod';
-import type { LearningContext, UserProfile, LearningRecord, WordRecord } from '../domain/types.js';
+import type { Book, LearningContext, UserProfile, LearningRecord, ReviewCandidate, WordRecord } from '../domain/types.js';
+import { bookPlanSchema, bookProgressSchema } from '../domain/progress.js';
+import { defaultBookId, initialBookProgress } from '../materials/default-book.js';
 
 export interface HistoryRepository {
+  loadDefaultBook(): Book;
   findProfile(userId: string): UserProfile | null;
   insertProfile(profile: NewUserProfile): boolean;
   loadContext(userId: string): LearningContext;
+  loadPlanContext(userId: string): { profile: UserProfile; book: Book; learnedWords: string[]; reviewCandidates: ReviewCandidate[] };
 }
 
 type NewUserProfile = Pick<UserProfile,
-  'userId' | 'displayName' | 'book' | 'bookIntroduction' | 'dailyNewWordCount' | 'dailyReviewWordCount'
+  'userId' | 'displayName' | 'bookId' | 'progress' | 'bookIntroduction' | 'dailyNewWordCount' | 'dailyReviewWordCount'
 >;
 
-const profileSchema = z.object({
-  userId: z.string(), displayName: z.string(), currentLevel: z.string(), progress: z.string(), book: z.string(),
+const profileFields = z.object({
+  userId: z.string(), displayName: z.string(), currentLevel: z.string(),
   bookIntroduction: z.string(), profileSummary: z.string(),
   dailyNewWordCount: z.int().nonnegative(), dailyReviewWordCount: z.int().nonnegative(),
   learningCount: z.number().int(), lastLearningAt: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),
-}) satisfies z.ZodType<UserProfile>;
+});
+const storedProfileSchema = profileFields.extend({ bookId: z.string(), progress: z.string() });
+const legacyProfileSchema = profileFields.extend({ book: z.string(), progress: z.string() });
+const storedBookSchema = z.object({
+  id: z.string(), title: z.string(), introduction: z.string(), defaultPlan: z.string(), wordCount: z.int().positive(),
+});
 
 const sessionSchema = z.object({
   id: z.number().int(), userId: z.string(), newWords: z.array(z.string()), reviewWords: z.array(z.string()),
@@ -32,6 +42,9 @@ const wordSchema = z.object({
   errorCount: z.number().int(), lastLearningAt: z.string().nullable(), sentences: z.array(z.string()),
   score: z.number().nullable(), evaluation: z.string(),
 }) satisfies z.ZodType<WordRecord>;
+const reviewCandidateSchema = wordSchema.pick({
+  id: true, word: true, learningCount: true, errorCount: true, evaluation: true, lastLearningAt: true,
+});
 
 function parseRow<T>(schema: z.ZodType<T>, row: unknown, table: string): T {
   const result = schema.safeParse(row);
@@ -61,36 +74,94 @@ function arrayFromJson(value: unknown, field: string): unknown[] {
   }
 }
 
-function findProfile(db: DatabaseSync, userId: string, legacyProfile: boolean): UserProfile | null {
-  const details = legacyProfile ?
+function readStoredJson<T>(schema: z.ZodType<T>, raw: string, field: string): T {
+  try {
+    return schema.parse(JSON.parse(raw));
+  } catch (error) {
+    throw new AppError('DB_INVALID_JSON', `${field} 的 JSON 格式无效。`, { cause: error });
+  }
+}
+
+function loadBook(db: DatabaseSync, bookId: string): Book {
+  const row = db.prepare(`
+    SELECT id, title, introduction, default_plan AS defaultPlan, word_count AS wordCount FROM book WHERE id = ?
+  `).get(bookId);
+
+  if (!row) {
+    throw new AppError('DB_BOOK_NOT_FOUND', '词书记录不存在，请先运行 npm run db:init。');
+  }
+
+  const book = parseRow(storedBookSchema, row, 'book');
+  return { ...book, defaultPlan: readStoredJson(bookPlanSchema, book.defaultPlan, 'book.default_plan') };
+}
+
+function findProfile(db: DatabaseSync, userId: string, version: ProfileSchemaVersion): UserProfile | null {
+  const details = version === 'original' ?
     "user_id AS displayName, '' AS bookIntroduction, '' AS profileSummary, 10 AS dailyNewWordCount, 5 AS dailyReviewWordCount" :
     `COALESCE(display_name, user_id) AS displayName, book_introduction AS bookIntroduction, profile_summary AS profileSummary,
      daily_new_word_count AS dailyNewWordCount, daily_review_word_count AS dailyReviewWordCount`;
+  const bookColumn = version === 'current' ? 'book_id AS bookId' : 'book';
   const row = db.prepare(`
-    SELECT user_id AS userId, current_level AS currentLevel, progress, book, ${details},
+    SELECT user_id AS userId, current_level AS currentLevel, progress, ${bookColumn}, ${details},
            learning_count AS learningCount, last_learning_at AS lastLearningAt,
            created_at AS createdAt, updated_at AS updatedAt
     FROM user_profile WHERE user_id = ?
   `).get(userId);
-  return row ? parseRow(profileSchema, row, 'user_profile') : null;
+
+  if (!row) {
+    return null;
+  }
+
+  if (version === 'current') {
+    const profile = parseRow(storedProfileSchema, row, 'user_profile');
+    return { ...profile, progress: readStoredJson(bookProgressSchema, profile.progress, 'user_profile.progress') };
+  }
+
+  const { book, progress, ...profile } = parseRow(legacyProfileSchema, row, 'user_profile');
+  assertDefaultBookTitle(book);
+  return { ...profile, bookId: defaultBookId, progress: initialBookProgress(undefined, progress) };
 }
 
 export function createHistoryRepository(databasePath: string): HistoryRepository {
   return {
+    loadDefaultBook() {
+      return readDatabase(databasePath, (db) => loadBook(db, defaultBookId));
+    },
     findProfile(userId) {
       return readDatabase(databasePath, (db, legacyProfile) => findProfile(db, userId, legacyProfile));
     },
-    insertProfile({ userId, displayName, book, bookIntroduction, dailyNewWordCount, dailyReviewWordCount }) {
+    insertProfile({ userId, displayName, bookId, progress, bookIntroduction, dailyNewWordCount, dailyReviewWordCount }) {
       return writeDatabase(databasePath, (db) => {
         const now = new Date().toISOString();
         const result = db.prepare(`
           INSERT INTO user_profile (
-            user_id, display_name, current_level, book, book_introduction,
+            user_id, display_name, current_level, book_id, progress, book_introduction,
             daily_new_word_count, daily_review_word_count, created_at, updated_at
-          ) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(user_id) DO NOTHING
-        `).run(userId, displayName, book, bookIntroduction, dailyNewWordCount, dailyReviewWordCount, now, now);
+        `).run(userId, displayName, bookId, JSON.stringify(progress), bookIntroduction, dailyNewWordCount, dailyReviewWordCount, now, now);
         return result.changes === 1;
+      });
+    },
+    loadPlanContext(userId) {
+      return readDatabase(databasePath, (db, version) => {
+        const profile = findProfile(db, userId, version);
+
+        if (!profile) {
+          throw new AppError('DB_PROFILE_NOT_FOUND', '找不到用户档案，请先完成建档。');
+        }
+
+        const book = loadBook(db, profile.bookId);
+        const learnedWords = db.prepare(`
+          SELECT word FROM word_record WHERE user_id = ? AND book = ? AND learning_count > 0
+        `).all(userId, book.title).map((row) => parseRow(z.string(), row.word, 'word_record'));
+        const reviewCandidates = db.prepare(`
+          SELECT id, word, learning_count AS learningCount, error_count AS errorCount,
+                 evaluation, last_learning_at AS lastLearningAt
+          FROM word_record WHERE user_id = ? AND book = ? AND learning_count > 0
+          ORDER BY last_learning_at DESC, id DESC LIMIT 30
+        `).all(userId, book.title).map((row) => parseRow(reviewCandidateSchema, row, 'word_record'));
+        return { profile, book, learnedWords, reviewCandidates };
       });
     },
     loadContext(userId) {

@@ -6,7 +6,10 @@ import type { DailyWordCounts } from '../domain/types.js';
 import { AppError } from '../errors.js';
 import { initializeDatabase } from '../db/database.js';
 import { createHistoryRepository } from '../db/history-repository.js';
-import { defaultBookOverview } from '../materials/default-book.js';
+import { readBookWords } from '../materials/book.js';
+import { bookOverview, defaultBookMetadata } from '../materials/default-book.js';
+import type { Book } from '../domain/types.js';
+import type { AiRunner } from '../ai/client.js';
 import { createLearningService } from '../services/learning-service.js';
 import { isInteractiveTerminal, userPrompt, writeAgent, writeSystem } from './conversation.js';
 
@@ -30,7 +33,7 @@ function parseWordCounts(input: string): DailyWordCounts | null {
     null;
 }
 
-async function readOnboardingInput(ask: Ask) {
+async function readOnboardingInput(ask: Ask, book: Book) {
   let displayName = await ask('欢迎使用 english-learning-agent，怎么称呼？');
 
   while (displayName !== null && (!displayName || [...displayName].length >= 20)) {
@@ -47,9 +50,9 @@ async function readOnboardingInput(ask: Ask) {
     const counts = parseWordCounts(countInput);
 
     if (counts) {
-      const overview = defaultBookOverview.replace('\n二、建议学习路线', '\n\n二、建议学习路线');
-      const preferences = await ask(`${overview}\n\n你已经学过哪些内容？还有什么想重点练习的？`);
-      return preferences === null ? null : { displayName, ...counts, preferences: preferences || '从头开始学习' };
+      const preferencePrompt = '你已经学过哪些内容？还有什么想重点练习的？直接回车使用默认路线。';
+      const preferences = await ask(`${bookOverview(book)}\n\n${preferencePrompt}`);
+      return preferences === null ? null : { displayName, ...counts, preferences };
     }
 
     countInput = await ask('请输入两个用英文逗号分隔的非负整数，例如 10,5。');
@@ -79,7 +82,8 @@ async function confirmStart(ask: Ask, displayName: string): Promise<boolean> {
 }
 
 export async function runOnboarding(config: AppConfig): Promise<void> {
-  initializeDatabase(config.databasePath);
+  const words = await readBookWords(config.bookPath);
+  initializeDatabase(config.databasePath, defaultBookMetadata(words.length));
   const service = createLearningService({ historyRepository: createHistoryRepository(config.databasePath) });
   const interactive = isInteractiveTerminal();
   const terminal = createInterface({ input: stdin, output: stdout, terminal: interactive, crlfDelay: Infinity });
@@ -123,19 +127,25 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
     let profile = service.findDefaultProfile();
 
     if (!profile) {
-      const input = await readOnboardingInput(ask);
+      const book = service.loadDefaultBook();
+      const input = await readOnboardingInput(ask, book);
 
       if (!input) {
         return;
       }
 
-      writeSystem('正在生成学习路线…');
-      const { generateBookIntroduction } = await import('../ai/onboarding.js');
-      const introduction = await service.onboardDefaultUser(input, (counts, preferences, signal) =>
-        generateBookIntroduction(config.ai, counts, preferences, signal), signal);
+      if (input.preferences) {
+        writeSystem('正在生成学习路线…');
+      }
 
-      if (introduction !== null) {
-        writeAgent(`你的基础学习路线\n\n${introduction}`);
+      const details = await service.onboardDefaultUser(book, input, async (book, counts, preferences, signal) => {
+        const { generateBookIntroduction } = await import('../ai/onboarding.js');
+        return generateBookIntroduction(config.ai, book, counts, preferences, signal);
+      }, signal);
+
+      if (details) {
+        const route = input.preferences ? details.introduction : details.progress.plan.description;
+        writeAgent(`你的基础学习路线\n\n${route}`);
       } else {
         profile = service.findDefaultProfile();
 
@@ -149,8 +159,24 @@ export async function runOnboarding(config: AppConfig): Promise<void> {
       return;
     }
 
-    service.loadLearningContext();
-    writeSystem('已准备好进入学习。');
+    writeSystem('正在准备今日词单…');
+    let runner: AiRunner | undefined;
+
+    try {
+      const { newWords, reviewWords } = await service.prepareLearningPlan(words, async (request) => {
+        if (!runner) {
+          const { createAiRunner } = await import('../ai/client.js');
+          runner = createAiRunner(config.ai);
+        }
+
+        return runner.runText(request);
+      }, signal);
+      const newList = newWords.join('、') || '暂无新词';
+      const reviewList = reviewWords.join('、') || '暂无复习词';
+      writeAgent(`今日新词（${newWords.length}）\n${newList}\n\n今日复习词（${reviewWords.length}）\n${reviewList}`);
+    } finally {
+      await runner?.close();
+    }
   } catch (error) {
     if (!signal.aborted) {
       throw error;
