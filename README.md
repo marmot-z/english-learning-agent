@@ -2,24 +2,42 @@
 
 这是供百词斩助手 Web 接入的独立 Node.js 服务。需要 Node.js 22.13 或更高版本。使用 nvm 时可先运行 `nvm use 22`。
 
-## 本地启动
+## 本地开发
 
 ```sh
 npm ci
 npm run dev
 ```
 
-默认监听 `127.0.0.1:18034`。可通过环境变量或项目根目录的 `.env` 设置 `LEARNING_AGENT_HOST` 和 `LEARNING_AGENT_PORT`。`GET /api/learning-agent/health` 返回 `200` 和 `{"status":"ok"}`，表示 HTTP 进程存活。
+默认监听 `127.0.0.1:18034`。可通过环境变量或项目根目录的 `.env` 设置 `LEARNING_AGENT_HOST` 和 `LEARNING_AGENT_PORT`。
 
-前端在 `baicizhan-helper-web` 中运行 `npm run dev`。登录后从用户菜单进入「英语学习 Agent」占位页，地址为 `/page/learning-agent`。前端开发服务器将 `/api/learning-agent` 转发到本服务。更换后端地址或端口时，在前端的 `.env.local` 中同步设置 `LEARNING_AGENT_PROXY_TARGET`。
-
-## 类型检查与编译启动
+开发时 Web 和 Agent 默认都使用 `https://www.baicizhan-helper.cn`。如果 Web 的 `API_PROXY_TARGET` 切到本地 Proxy，Agent 也要使用同一个地址。
 
 ```sh
+BAICIZHAN_HELPER_API_BASE_URL=http://127.0.0.1:18033 npm run dev
+```
+
+前端 Vite 将 `/agent/*` 转发到本服务的 `/api/learning-agent/*`。更换 Agent 的地址或端口时，在 Web 的 `.env.development.local` 中同步设置 `LEARNING_AGENT_PROXY_TARGET`。经过 Web 请求 `GET /agent/health`，或直连 Agent 请求 `GET /api/learning-agent/health`，都应返回 `{"status":"ok"}`。
+
+## 词书与学习档案
+
+- `BAICIZHAN_HELPER_API_BASE_URL` 指向 Web 所用的同一个助手代理。Agent 使用请求中的 `access_token` 调用代理的 `/userInfoWithVip` 核验用户 ID，并通过 `/booksInfo` 查找词书。
+- `LEARNING_AGENT_DB_PATH` 指定 Agent 的 SQLite 文件，默认 `.data/learning-agent-web.sqlite`。相对路径以项目根目录为基准，服务启动时创建 `user_agent_profile` 表。
+- 对外的 `GET /agent/profile` 读取当前账号的档案，无记录时 `data` 为 `null`。`PUT /agent/profile/book` 接收 `{ "bookId": 123 }` 并返回更新后的档案。换书保存新书的目录简介，清空学习路线和单词排序。
+
+## 生产部署
+
+```sh
+npm ci
 npm run check
 npm run build
+npm test
 npm start
 ```
+
+生产进程监听 `127.0.0.1:18034`，默认连接同机 Proxy `http://127.0.0.1:18033`。通过项目根目录的 `.env` 或进程环境设置生产配置。将 `LEARNING_AGENT_DB_PATH` 指到服务用户可写的持久目录，以便更新程序时保留学习档案。
+
+Nginx 使用 Proxy 仓库的 `deploy/nginx.conf`，将同域 `/agent/*` 映射到本服务的 `/api/learning-agent/*`，并保留 `access_token` 请求头。普通接口走同机 Proxy，登录后在 Web 的 `/page/learning-agent` 使用 Agent 功能。
 
 ## 模型配置
 

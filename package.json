@@ -7,9 +7,10 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch src/server.ts --development",
     "check": "tsc --noEmit",
     "build": "tsc",
+    "test": "node --import tsx --test test/*.test.ts",
     "start": "node dist/server.js"
   },
   "dependencies": {
