@@ -12,8 +12,19 @@ import { createAgentServer } from '../src/agent-server.js';
 import { openProfileRepository } from '../src/profile-repository.js';
 
 const books = [
-  { id: 101, name: '入门词汇', img: 'https://example.test/101.png', total_words_count: 100, desc: '第一本书的介绍' },
-  { id: 102, name: '进阶词汇', total_words_count: 200, desc: '第二本书的介绍' },
+  {
+    id: 101,
+    name: '入门词汇',
+    img: 'https://example.test/101.png',
+    total_words_count: 100,
+    desc: '第一本书的介绍',
+  },
+  {
+    id: 102,
+    name: '进阶词汇',
+    total_words_count: 200,
+    desc: '第二本书的介绍',
+  },
 ];
 
 async function listen(server: Server): Promise<URL> {
@@ -26,13 +37,17 @@ async function listen(server: Server): Promise<URL> {
 }
 
 function close(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  return new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 }
 
 async function fixture(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), 'learning-agent-profile-'));
   const databasePath = join(dir, 'profile.sqlite');
-  const helperState = { outage: false, catalog: books, catalogCalls: 0 };
+  const helperState = {
+    outage: false,
+    catalog: books,
+    catalogCalls: 0,
+  };
   const helper = createServer((request, response) => {
     const token = request.headers.access_token;
     response.setHeader('Content-Type', 'application/json');
@@ -84,30 +99,49 @@ async function fixture(t: TestContext) {
     });
   }
 
-  return { agentUrl, database, helperState, request };
+  return {
+    agentUrl,
+    database,
+    helperState,
+    request,
+  };
 }
 
 test('selects, reloads and switches books with account isolation and an atomic reset', async (t) => {
   const { request, database, helperState } = await fixture(t);
-  const first = { code: 200, data: {
-    bookId: 101,
-    bookIntroduction: '第一本书的介绍',
-    learningRoute: null,
-    book: { id: 101, name: '入门词汇', img: 'https://example.test/101.png', total_words_count: 100 },
-  } };
+  const first = {
+    code: 200,
+    data: {
+      bookId: 101,
+      bookIntroduction: '第一本书的介绍',
+      learningRoute: null,
+      wordOrder: null,
+      bookRevision: 1,
+      book: {
+        id: 101,
+        name: '入门词汇',
+        img: 'https://example.test/101.png',
+        total_words_count: 100,
+      },
+    },
+  };
   assert.deepEqual(await (await request('test-user-one')).json(), { code: 200, data: null });
   assert.equal(helperState.catalogCalls, 0);
   assert.deepEqual(await (await request('test-user-one', { bookId: 101 })).json(), first);
   assert.deepEqual(await (await request('test-user-one')).json(), first);
   assert.deepEqual(await (await request('test-user-two')).json(), { code: 200, data: null });
 
-  database.prepare(`
+  database
+    .prepare(
+      `
     UPDATE user_agent_profile SET
       book_introduction = '旧简介', learning_route = '旧路线', word_order = '[30, 20]',
       last_learning_date = '2026-11-20',
       created_at = '2026-11-20T00:00:00.000Z', updated_at = '2026-11-21T00:00:00.000Z'
     WHERE user_id = 1
-  `).run();
+  `,
+    )
+    .run();
   const findRow = database.prepare('SELECT * FROM user_agent_profile WHERE user_id = 1');
   const saved = findRow.get();
   const sameBook = await request('test-user-one', { bookId: 101 });
@@ -117,12 +151,22 @@ test('selects, reloads and switches books with account isolation and an atomic r
   assert.equal((await request('test-user-two', { bookId: 101 })).status, 200);
   const switched = await request('test-user-one', { bookId: 102 });
   assert.equal(switched.status, 200);
-  assert.deepEqual(await switched.json(), { code: 200, data: {
-    bookId: 102,
-    bookIntroduction: '第二本书的介绍',
-    learningRoute: null,
-    book: { id: 102, name: '进阶词汇', img: '', total_words_count: 200 },
-  } });
+  assert.deepEqual(await switched.json(), {
+    code: 200,
+    data: {
+      bookId: 102,
+      bookIntroduction: '第二本书的介绍',
+      learningRoute: null,
+      wordOrder: null,
+      bookRevision: 2,
+      book: {
+        id: 102,
+        name: '进阶词汇',
+        img: '',
+        total_words_count: 200,
+      },
+    },
+  });
   const updated = findRow.get();
   assert.ok(updated);
   assert.equal(updated.book_id, 102);
@@ -156,7 +200,15 @@ test('preserves the recorded book when the catalog no longer lists it', async (t
   const { request, helperState } = await fixture(t);
   assert.equal((await request('test-user-one', { bookId: 101 })).status, 200);
   helperState.catalog = [];
-  assert.deepEqual(await (await request('test-user-one')).json(), { code: 200, data: {
-    bookId: 101, bookIntroduction: '第一本书的介绍', learningRoute: null, book: null,
-  } });
+  assert.deepEqual(await (await request('test-user-one')).json(), {
+    code: 200,
+    data: {
+      bookId: 101,
+      bookIntroduction: '第一本书的介绍',
+      learningRoute: null,
+      wordOrder: null,
+      bookRevision: 1,
+      book: null,
+    },
+  });
 });

@@ -22,8 +22,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
 const defaultHelperUrl = argv.includes('--development') ? 'https://www.baicizhan-helper.cn' : 'http://127.0.0.1:18033';
 const helperBaseUrl = new URL(env.BAICIZHAN_HELPER_API_BASE_URL?.trim() || defaultHelperUrl);
 
-if (!['http:', 'https:'].includes(helperBaseUrl.protocol) || helperBaseUrl.username || helperBaseUrl.password ||
-    helperBaseUrl.search || helperBaseUrl.hash) {
+if (
+  !['http:', 'https:'].includes(helperBaseUrl.protocol) ||
+  helperBaseUrl.username ||
+  helperBaseUrl.password ||
+  helperBaseUrl.search ||
+  helperBaseUrl.hash
+) {
   throw new Error('BAICIZHAN_HELPER_API_BASE_URL 必须是助手代理的 HTTP 或 HTTPS 根地址。');
 }
 
